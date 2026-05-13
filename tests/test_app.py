@@ -8,7 +8,6 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
-os.environ["SECRET_KEY"] = "test-secret"
 
 from backend.app import app, db
 
@@ -35,6 +34,8 @@ def test_request_ride_creates_trip(client):
         json={"pickup": "CBD", "destination": "Westlands"},
     )
 
+    data = response.get_json()
+
     assert response.status_code == 201
-    assert response.get_json()["pickup"] == "CBD"
-    assert response.get_json()["destination"] == "Westlands"
+    assert data["pickup"] == "CBD"
+    assert data["destination"] == "Westlands"

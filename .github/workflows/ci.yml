@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
 
 jobs:
   test-and-build:
@@ -12,26 +11,13 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:15
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: bodaboda
         ports:
           - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres -d bodaboda"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=5
-
-    env:
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_HOST: localhost
-      DB_PORT: 5432
-      DB_NAME: bodaboda
-      SECRET_KEY: test-secret
 
     steps:
       - name: Checkout Code
@@ -40,16 +26,15 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: 3.11
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
           pip install pytest
 
       - name: Run Tests
-        run: python -m pytest
+        run: pytest
 
       - name: Build Docker Image
-        run: docker build -t bodaboda-app ./backend
+        run: docker build -t ewrl9/bodaboda-app .
