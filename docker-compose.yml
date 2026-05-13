@@ -1,7 +1,6 @@
 services:
   backend:
-    image: ${DOCKER_IMAGE:-bodaboda-app-backend}
-    build: ./backend
+    image: ewrld9/bodaboda-app:latest
     env_file:
       - ./backend/.env
     depends_on:
