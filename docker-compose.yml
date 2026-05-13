@@ -1,5 +1,6 @@
 services:
   backend:
+    image: ${DOCKER_IMAGE:-bodaboda-app-backend}
     build: ./backend
     env_file:
       - ./backend/.env
