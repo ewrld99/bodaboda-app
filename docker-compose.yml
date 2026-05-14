@@ -3,6 +3,8 @@ services:
     image: ewrld9/bodaboda-app:latest
     env_file:
       - ./backend/.env
+      ports:
+      - "5000:5000"
     depends_on:
       db:
         condition: service_healthy
