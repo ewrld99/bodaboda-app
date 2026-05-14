@@ -39,3 +39,13 @@ def test_request_ride_creates_trip(client):
     assert response.status_code == 201
     assert data["pickup"] == "CBD"
     assert data["destination"] == "Westlands"
+
+
+def test_rider_dashboard_expected_jane_fails(client):
+    response = client.get("/api/rider-dashboard")
+    data = response.get_json()
+
+    # This test is intentionally incorrect and will fail because
+    # the application sets the rider name to "John".
+    assert response.status_code == 200
+    assert data["rider"] == "Jane"
