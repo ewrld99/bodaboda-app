@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rider Dashboard | BodaConnect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&family=Poppins:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="rider">
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="index.html">
+        <div class="brand-mark">BC</div>
+        <span>BodaConnect</span>
+      </a>
+      <nav class="nav" aria-label="Main navigation">
+        <span class="nav-greeting" id="nav-greeting"></span>
+        <button class="btn btn-ghost" type="button" onclick="logout()">Logout</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell page" data-protected hidden>
+   
+
+    <div class="panel panel-pad">
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="summary-label">Rider</div>
+          <div id="rider-page-name" class="summary-value">Rider</div>
+        </div>
+        <div class="metric">
+          <div class="summary-label">Trips this rider has had</div>
+          <div id="rider-page-trip-count" class="summary-value">0</div>
+        </div>
+      </div>
+
+      <div class="page-head" style="margin-top:24px;">
+        <div>
+          <div class="eyebrow">Requests</div>
+          <h2>Customer ride requests</h2>
+          <div class="status-filters" aria-label="Ride status filter">
+            <button id="in-progress-filter" class="status-filter active" type="button" onclick="setRideStatusFilter('in_progress')">In progress</button>
+            <button id="completed-filter" class="status-filter" type="button" onclick="setRideStatusFilter('completed')">Completed</button>
+          </div>
+        </div>
+        <button class="btn btn-ghost" onclick="loadDashboard()">Refresh</button>
+      </div>
+
+      <div id="rider-page-ride-list" class="ride-list">
+        <div class="empty">Loading requested rides...</div>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

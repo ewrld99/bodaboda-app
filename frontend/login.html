@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login | BodaConnect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&family=Poppins:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="login">
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="index.html">
+        <div class="brand-mark">BC</div>
+        <span>BodaConnect</span>
+      </a>
+      <nav class="nav" aria-label="Main navigation">
+        <a class="nav-link" href="index.html" data-nav-page="home">Home</a>
+        <a class="nav-link" href="login.html" data-auth="guest" data-nav-page="login">Login</a>
+        <a class="nav-link" href="registration.html" data-auth="guest" data-nav-page="registration">Register</a>
+        <a class="nav-link" href="login.html" data-auth="user" data-nav-page="dashboard" data-dashboard-link onclick="openDashboard(event)" hidden>Dashboard</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell page">
+    <div class="page-head auth-head">
+      <div>
+        <h2>Login</h2>
+      </div>
+    </div>
+
+    <div class="auth-layout">
+      <form class="panel panel-pad form" onsubmit="loginAccount(event)">
+        <div class="role-options" aria-label="Login role">
+          <button id="login-customer-role" class="role-btn active" type="button" onclick="setRole('login', 'customer')">Customer</button>
+          <button id="login-rider-role" class="role-btn" type="button" onclick="setRole('login', 'rider')">Rider</button>
+        </div>
+        <div class="field">
+          <label for="login-email">Email</label>
+          <input id="login-email" name="email" type="email" placeholder="you@example.com" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" placeholder="Your password" autocomplete="current-password" />
+        </div>
+        <button class="btn btn-primary btn-full" type="submit">Login</button>
+        <p class="auth-prompt">
+          Don't have an account?
+          <a href="registration.html" data-auth="guest">Create account</a>
+        </p>
+        <div id="auth-message" class="notice" role="status"></div>
+      </form>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

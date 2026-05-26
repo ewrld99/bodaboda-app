@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customer Dashboard | BodaConnect</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&family=Poppins:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="customer">
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="index.html">
+        <div class="brand-mark">BC</div>
+        <span>BodaConnect</span>
+      </a>
+      <nav class="nav" aria-label="Main navigation">
+        <span class="nav-greeting" id="nav-greeting"></span>
+        <button class="icon-btn" type="button" onclick="logout()" aria-label="Logout" title="Logout">
+          <span class="logout-icon" aria-hidden="true"></span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="shell page" data-protected hidden>
+    <div class="role-banner">
+      <div>
+        <div class="eyebrow">Customer</div>
+        <h2 id="customer-title">Customer page</h2>
+        <p class="lead">Request a ride and track how many requests are currently waiting for a rider.</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <form class="panel panel-pad form" data-message-target="customer-ride-message" onsubmit="requestRide(event)">
+        <div class="field">
+          <label for="customer-pickup">Pickup location</label>
+          <input id="customer-pickup" name="pickup" type="text" placeholder="Nyerere Square" autocomplete="street-address" />
+        </div>
+        <div class="field">
+          <label for="customer-destination">Destination</label>
+          <input id="customer-destination" name="destination" type="text" placeholder="Udom" autocomplete="street-address" />
+        </div>
+        <div class="field">
+          <label for="customer-rider">Nearby rider</label>
+          <select id="customer-rider" name="rider_id" data-rider-select>
+            <option value="">Loading nearby riders...</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" type="submit">Request ride</button>
+        <div id="customer-ride-message" class="notice" role="status"></div>
+      </form>
+
+      <aside class="panel panel-pad">
+        <div class="eyebrow">Customer stats</div>
+        <h2 id="customer-request-count">0 requests</h2>
+        <p class="lead">These are your ride requests and their current status.</p>
+      </aside>
+    </div>
+
+    <section class="page">
+      <div class="page-head">
+        <div>
+          <div class="eyebrow">Ride status</div>
+          <h2>Your ride requests</h2>
+        </div>
+        <button class="icon-btn" type="button" onclick="loadCustomerDashboard()" aria-label="Refresh ride requests" title="Refresh ride requests">
+          <span class="refresh-icon" aria-hidden="true"></span>
+        </button>
+      </div>
+
+      <div id="customer-ride-list" class="ride-list">
+        <div class="empty">Loading your ride requests...</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
