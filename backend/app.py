@@ -10,6 +10,7 @@ from flask import Flask, request, jsonify
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from flask_sqlalchemy import SQLAlchemy
+from mqtt_client import connect_mqtt
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 
