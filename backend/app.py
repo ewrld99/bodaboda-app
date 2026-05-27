@@ -10,7 +10,6 @@ from flask import Flask, request, jsonify
 from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from flask_sqlalchemy import SQLAlchemy
-from backend.mqtt_client import connect_mqtt
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -18,8 +17,6 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 app = Flask(__name__)
-
-mqtt_client = connect_mqtt()
 
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
@@ -397,16 +394,6 @@ def request_ride():
         ),
         201,
     )
-
-
-@app.route("/ride/status", methods=["POST"])
-def ride_status():
-
-    data = {"ride_id": 101, "driver_id": 5, "status": request.json["status"]}
-
-    mqtt_client.publish("ride/status", json.dumps(data))
-
-    return jsonify({"message": "Ride status published", "data": data})
 
 
 @app.route("/api/ride-requests/<int:ride_id>/status", methods=["PATCH"])

@@ -3,4 +3,3 @@ psycopg2-binary
 sqlalchemy
 flask-sqlalchemy
 python-dotenv
-paho-mqtt
