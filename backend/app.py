@@ -398,24 +398,16 @@ def request_ride():
         201,
     )
 
-@app.route('/ride/status', methods=['POST'])
+
+@app.route("/ride/status", methods=["POST"])
 def ride_status():
 
-    data = {
-        "ride_id": 101,
-        "driver_id": 5,
-        "status": request.json["status"]
-    }
+    data = {"ride_id": 101, "driver_id": 5, "status": request.json["status"]}
 
-    mqtt_client.publish(
-        "ride/status",
-        json.dumps(data)
-    )
+    mqtt_client.publish("ride/status", json.dumps(data))
 
-    return jsonify({
-        "message": "Ride status published",
-        "data": data
-    })
+    return jsonify({"message": "Ride status published", "data": data})
+
 
 @app.route("/api/ride-requests/<int:ride_id>/status", methods=["PATCH"])
 def update_ride_status(ride_id):

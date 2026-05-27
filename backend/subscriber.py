@@ -4,12 +4,15 @@ BROKER = "mqtt"
 PORT = 1883
 TOPIC = "ride/status"
 
+
 def on_connect(client, userdata, flags, rc):
     print("Passenger connected")
     client.subscribe(TOPIC)
 
+
 def on_message(client, userdata, msg):
     print("Ride Update:", msg.payload.decode())
+
 
 client = mqtt.Client()
 
