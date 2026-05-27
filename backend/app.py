@@ -13,7 +13,6 @@ from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 
-
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -33,8 +32,7 @@ app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "dev-secret")
 app.config["JWT_EXP_SECONDS"] = int(os.getenv("JWT_EXP_SECONDS", "86400"))
 
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL or (
-    f"postgresql://{DB_USER}:{DB_PASSWORD}"
-    f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    f"postgresql://{DB_USER}:{DB_PASSWORD}" f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 
 db = SQLAlchemy(app)
@@ -59,10 +57,12 @@ def create_access_token(user):
         "iat": now,
         "exp": now + app.config["JWT_EXP_SECONDS"],
     }
-    signing_input = ".".join([
-        _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8")),
-        _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")),
-    ])
+    signing_input = ".".join(
+        [
+            _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8")),
+            _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")),
+        ]
+    )
     signature = hmac.new(
         app.config["SECRET_KEY"].encode("utf-8"),
         signing_input.encode("ascii"),
@@ -143,8 +143,12 @@ class Rider(db.Model):
     __tablename__ = "riders"
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(128), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True)
-    user = db.relationship("User", backref=db.backref("rider_profile", uselist=False), lazy=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True
+    )
+    user = db.relationship(
+        "User", backref=db.backref("rider_profile", uselist=False), lazy=True
+    )
 
 
 def serialize_user(user):
@@ -168,10 +172,14 @@ def ensure_database():
         rider_columns = {column["name"] for column in inspector.get_columns("riders")}
         if "user_id" not in rider_columns:
             with db.engine.begin() as connection:
-                connection.exec_driver_sql("ALTER TABLE riders ADD COLUMN user_id INTEGER")
+                connection.exec_driver_sql(
+                    "ALTER TABLE riders ADD COLUMN user_id INTEGER"
+                )
 
     if "ride_requests" in inspector.get_table_names():
-        ride_columns = {column["name"] for column in inspector.get_columns("ride_requests")}
+        ride_columns = {
+            column["name"] for column in inspector.get_columns("ride_requests")
+        }
         if "status" not in ride_columns:
             with db.engine.begin() as connection:
                 connection.exec_driver_sql(
@@ -179,10 +187,14 @@ def ensure_database():
                 )
         if "rider_id" not in ride_columns:
             with db.engine.begin() as connection:
-                connection.exec_driver_sql("ALTER TABLE ride_requests ADD COLUMN rider_id INTEGER")
+                connection.exec_driver_sql(
+                    "ALTER TABLE ride_requests ADD COLUMN rider_id INTEGER"
+                )
         if "customer_id" not in ride_columns:
             with db.engine.begin() as connection:
-                connection.exec_driver_sql("ALTER TABLE ride_requests ADD COLUMN customer_id INTEGER")
+                connection.exec_driver_sql(
+                    "ALTER TABLE ride_requests ADD COLUMN customer_id INTEGER"
+                )
 
 
 def serialize_ride_request(ride_request):
@@ -226,10 +238,21 @@ def register():
         first_name = first_name or (parts[0] if parts else "")
         last_name = last_name or (parts[1] if len(parts) > 1 else "")
 
-    if not first_name or not last_name or not email or not password or role not in {"customer", "rider"}:
-        return jsonify({
-            "error": "first_name, last_name, email, password, and a valid role are required"
-        }), 400
+    if (
+        not first_name
+        or not last_name
+        or not email
+        or not password
+        or role not in {"customer", "rider"}
+    ):
+        return (
+            jsonify(
+                {
+                    "error": "first_name, last_name, email, password, and a valid role are required"
+                }
+            ),
+            400,
+        )
 
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "account already exists"}), 409
@@ -253,18 +276,23 @@ def register():
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
-        app.logger.exception('IntegrityError during registration')
+        app.logger.exception("IntegrityError during registration")
         return jsonify({"error": "account already exists"}), 409
     except Exception as e:
         db.session.rollback()
-        app.logger.exception('Unexpected error during registration: %s', e)
+        app.logger.exception("Unexpected error during registration: %s", e)
         return jsonify({"error": "server error", "details": str(e)}), 500
 
-    return jsonify({
-        "message": "Account created",
-        "account": serialize_user(user),
-        "token": create_access_token(user),
-    }), 201
+    return (
+        jsonify(
+            {
+                "message": "Account created",
+                "account": serialize_user(user),
+                "token": create_access_token(user),
+            }
+        ),
+        201,
+    )
 
 
 @app.route("/api/login", methods=["POST"])
@@ -275,50 +303,56 @@ def login():
     role = (data.get("role") or "").strip().lower()
 
     if not email or not password or role not in {"customer", "rider"}:
-        return jsonify({
-            "error": "email, password, and a valid role are required"
-        }), 400
+        return jsonify({"error": "email, password, and a valid role are required"}), 400
 
     user = User.query.filter_by(email=email, role=role).first()
     if not user or not check_password_hash(user.password_hash, password):
         return jsonify({"error": "invalid login details"}), 401
 
-    return jsonify({
-        "message": "Logged in",
-        "account": serialize_user(user),
-        "token": create_access_token(user),
-    })
+    return jsonify(
+        {
+            "message": "Logged in",
+            "account": serialize_user(user),
+            "token": create_access_token(user),
+        }
+    )
 
 
 @app.route("/api/me")
 @token_required
 def me(user):
-    return jsonify({
-        "account": serialize_user(user),
-    })
+    return jsonify(
+        {
+            "account": serialize_user(user),
+        }
+    )
 
 
 @app.route("/api/riders")
 def riders():
     rider_list = Rider.query.order_by(Rider.name.asc()).all()
 
-    return jsonify({
-        "riders": [
-            {
-                "id": rider.id,
-                "name": rider.name,
-            }
-            for rider in rider_list
-        ]
-    })
+    return jsonify(
+        {
+            "riders": [
+                {
+                    "id": rider.id,
+                    "name": rider.name,
+                }
+                for rider in rider_list
+            ]
+        }
+    )
 
 
 @app.route("/api/site-stats")
 def site_stats():
-    return jsonify({
-        "total_trips": RideRequest.query.count(),
-        "total_riders": Rider.query.count(),
-    })
+    return jsonify(
+        {
+            "total_trips": RideRequest.query.count(),
+            "total_riders": Rider.query.count(),
+        }
+    )
 
 
 @app.route("/request-ride", methods=["POST"])
@@ -331,9 +365,7 @@ def request_ride():
     rider_id = data.get("rider_id")
 
     if not pickup or not destination or not rider_id:
-        return jsonify({
-            "error": "pickup, destination, and rider_id are required"
-        }), 400
+        return jsonify({"error": "pickup, destination, and rider_id are required"}), 400
 
     try:
         rider_id = int(rider_id)
@@ -353,10 +385,15 @@ def request_ride():
     db.session.add(ride_request)
     db.session.commit()
 
-    return jsonify({
-        "message": "Ride request received",
-        **serialize_ride_request(ride_request),
-    }), 201
+    return (
+        jsonify(
+            {
+                "message": "Ride request received",
+                **serialize_ride_request(ride_request),
+            }
+        ),
+        201,
+    )
 
 
 @app.route("/api/ride-requests/<int:ride_id>/status", methods=["PATCH"])
@@ -365,7 +402,10 @@ def update_ride_status(ride_id):
     status = (data.get("status") or "").strip().lower()
 
     if status not in {"pending", "in_progress", "completed"}:
-        return jsonify({"error": "status must be pending, in_progress, or completed"}), 400
+        return (
+            jsonify({"error": "status must be pending, in_progress, or completed"}),
+            400,
+        )
 
     ride_request = db.session.get(RideRequest, ride_id)
     if not ride_request:
@@ -399,18 +439,18 @@ def customer_dashboard(user):
         return jsonify({"error": "customer account is required"}), 403
 
     ride_requests = (
-        RideRequest.query
-        .filter_by(customer_id=user.id)
+        RideRequest.query.filter_by(customer_id=user.id)
         .order_by(RideRequest.id.desc())
         .all()
     )
 
-    return jsonify({
-        "assigned_trips": [
-            serialize_ride_request(ride_request)
-            for ride_request in ride_requests
-        ]
-    })
+    return jsonify(
+        {
+            "assigned_trips": [
+                serialize_ride_request(ride_request) for ride_request in ride_requests
+            ]
+        }
+    )
 
 
 @app.route("/rider-dashboard")
@@ -426,14 +466,16 @@ def rider_dashboard():
 
     ride_requests = ride_query.order_by(RideRequest.id.desc()).all()
 
-    return jsonify({
-        "rider": rider.name if rider else "No rider registered",
-        "rider_user_id": rider.user_id if rider else None,
-        "assigned_trips": [
-            serialize_ride_request(ride_request)
-            for ride_request in ride_requests
-        ]
-    })
+    return jsonify(
+        {
+            "rider": rider.name if rider else "No rider registered",
+            "rider_user_id": rider.user_id if rider else None,
+            "assigned_trips": [
+                serialize_ride_request(ride_request) for ride_request in ride_requests
+            ],
+        }
+    )
+
 
 if __name__ == "__main__":
     with app.app_context():
