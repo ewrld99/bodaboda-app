@@ -3,3 +3,4 @@ psycopg2-binary
 sqlalchemy
 flask-sqlalchemy
 python-dotenv
+prometheus-flask-exporter
