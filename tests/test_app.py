@@ -9,6 +9,8 @@ sys.path.insert(0, str(ROOT_DIR))
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
+import backend.app as app_module
+import backend.mqtt_client as mqtt_client
 from backend.app import RideRequest, Rider, User, app, db
 
 
@@ -110,7 +112,9 @@ def test_site_stats_counts_trips_and_riders(client):
     assert data["total_riders"] == 1
 
 
-def test_ride_status_can_be_completed(client):
+def test_ride_status_can_be_completed(client, monkeypatch):
+    monkeypatch.setattr(app_module, "publish_ride_status_update", lambda message: True)
+
     with app.app_context():
         ride_request = RideRequest(pickup="CBD", destination="Westlands")
         db.session.add(ride_request)
@@ -126,6 +130,122 @@ def test_ride_status_can_be_completed(client):
 
     assert response.status_code == 200
     assert data["status"] == "completed"
+
+
+def test_ride_status_update_publishes_mqtt_message(client, monkeypatch):
+    published_messages = []
+    monkeypatch.setattr(
+        app_module,
+        "publish_ride_status_update",
+        lambda message: published_messages.append(message) or True,
+    )
+
+    customer_response = client.post(
+        "/api/register",
+        json={
+            "name": "Amina Hassan",
+            "email": "amina.mqtt@example.com",
+            "password": "pass1234",
+            "role": "customer",
+        },
+    )
+    customer_data = customer_response.get_json()
+    rider_response = client.post(
+        "/api/register",
+        json={
+            "name": "Brian Rider",
+            "email": "brian.mqtt@example.com",
+            "password": "pass1234",
+            "role": "rider",
+        },
+    )
+    rider_data = rider_response.get_json()
+
+    ride_response = client.post(
+        "/api/request-ride",
+        json={
+            "pickup": "Nyerere Square",
+            "destination": "Posta Dar es Salaam",
+            "rider_id": rider_data["account"]["rider_id"],
+        },
+        headers={"Authorization": f"Bearer {customer_data['token']}"},
+    )
+    ride_id = ride_response.get_json()["id"]
+
+    response = client.patch(
+        f"/api/ride-requests/{ride_id}/status",
+        json={"status": "accepted"},
+    )
+    data = response.get_json()
+
+    assert app_module.RIDE_STATUS_TOPIC == "ride/status"
+    assert response.status_code == 200
+    assert data["status"] == "accepted"
+    assert len(published_messages) == 1
+
+    message = published_messages[0]
+    assert message == {
+        "ride_id": ride_id,
+        "status": "accepted",
+    }
+
+
+def test_mqtt_publisher_sends_json_to_configured_broker(monkeypatch):
+    publish_calls = []
+
+    class FakePublish:
+        @staticmethod
+        def single(*args, **kwargs):
+            publish_calls.append((args, kwargs))
+
+    monkeypatch.setattr(mqtt_client, "mqtt_publish", FakePublish)
+    monkeypatch.setenv("MQTT_ENABLED", "true")
+    monkeypatch.setenv("MQTT_HOST", "broker.example")
+    monkeypatch.setenv("MQTT_PORT", "1884")
+    monkeypatch.setenv("MQTT_QOS", "1")
+    monkeypatch.setenv("MQTT_RETAIN", "true")
+    monkeypatch.setenv("MQTT_KEEPALIVE", "30")
+    monkeypatch.setenv("MQTT_USERNAME", "backend")
+    monkeypatch.setenv("MQTT_PASSWORD", "secret")
+    monkeypatch.setenv("MQTT_RIDE_STATUS_TOPIC", "rides/status")
+    monkeypatch.delenv("MQTT_TOPIC", raising=False)
+
+    published = mqtt_client.publish_ride_status_update(
+        {
+            "ride_id": 12,
+            "status": "accepted",
+        }
+    )
+
+    assert published is True
+    assert len(publish_calls) == 1
+
+    args, kwargs = publish_calls[0]
+    assert args == ("rides/status",)
+    assert kwargs["payload"] == '{"ride_id":12,"status":"accepted"}'
+    assert kwargs["hostname"] == "broker.example"
+    assert kwargs["port"] == 1884
+    assert kwargs["qos"] == 1
+    assert kwargs["retain"] is True
+    assert kwargs["keepalive"] == 30
+    assert kwargs["auth"] == {"username": "backend", "password": "secret"}
+
+
+def test_mqtt_publisher_can_be_disabled(monkeypatch):
+    publish_calls = []
+
+    class FakePublish:
+        @staticmethod
+        def single(*args, **kwargs):
+            publish_calls.append((args, kwargs))
+
+    monkeypatch.setattr(mqtt_client, "mqtt_publish", FakePublish)
+    monkeypatch.setenv("MQTT_ENABLED", "false")
+
+    published = mqtt_client.publish_ride_status_update({"ride_id": 12})
+
+    assert published is False
+    assert publish_calls == []
 
 
 def test_completed_ride_can_be_deleted(client):

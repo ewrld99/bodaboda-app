@@ -1,12 +1,18 @@
 services:
   backend:
-    image: ewrld9/bodaboda-app:latest
+    # image: ewrld9/bodaboda-app:latest
+    build: ./backend
     env_file:
       - ./backend/.env
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PORT: 1883
     ports:
       - "5000:5000"
     depends_on:
       db:
+        condition: service_healthy
+      mqtt:
         condition: service_healthy
       
 
@@ -26,6 +32,8 @@ services:
       - ./backend/.env
     ports:
       - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -83,7 +91,26 @@ services:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+  mqtt:
+    image: eclipse-mosquitto:latest
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -t healthcheck -m ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
   
 volumes:
   prometheus-data:
   grafana-data:
+  mosquitto-data:
+  mosquitto-log:
+  db-data:

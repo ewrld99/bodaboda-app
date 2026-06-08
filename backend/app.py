@@ -14,6 +14,11 @@ from prometheus_flask_exporter import PrometheusMetrics
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 
+try:
+    from .mqtt_client import RIDE_STATUS_TOPIC, publish_ride_status_update
+except ImportError:
+    from mqtt_client import RIDE_STATUS_TOPIC, publish_ride_status_update
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -39,6 +44,10 @@ app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL or (
 )
 
 db = SQLAlchemy(app)
+
+RIDE_STATUS_VALUES = {"pending", "accepted", "started", "completed"}
+MQTT_RIDE_STATUS_VALUES = {"accepted", "started", "completed"}
+RIDE_STATUS_ALIASES = {"in_progress": "accepted"}
 
 
 def _b64url_encode(value):
@@ -186,7 +195,7 @@ def ensure_database():
         if "status" not in ride_columns:
             with db.engine.begin() as connection:
                 connection.exec_driver_sql(
-                    "ALTER TABLE ride_requests ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'in_progress'"
+                    "ALTER TABLE ride_requests ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending'"
                 )
         if "rider_id" not in ride_columns:
             with db.engine.begin() as connection:
@@ -214,6 +223,18 @@ def serialize_ride_request(ride_request):
         "rider_name": ride_request.rider.name if ride_request.rider else None,
         "customer_id": ride_request.customer_id,
         "customer_username": customer_username,
+    }
+
+
+def normalize_ride_status(status):
+    status = (status or "").strip().lower()
+    return RIDE_STATUS_ALIASES.get(status, status)
+
+
+def ride_status_mqtt_message(ride_request):
+    return {
+        "ride_id": ride_request.id,
+        "status": ride_request.status,
     }
 
 
@@ -402,11 +423,17 @@ def request_ride():
 @app.route("/api/ride-requests/<int:ride_id>/status", methods=["PATCH"])
 def update_ride_status(ride_id):
     data = request.get_json(silent=True) or {}
-    status = (data.get("status") or "").strip().lower()
+    status = normalize_ride_status(data.get("status"))
 
-    if status not in {"pending", "in_progress", "completed"}:
+    if status not in RIDE_STATUS_VALUES:
         return (
-            jsonify({"error": "status must be pending, in_progress, or completed"}),
+            jsonify(
+                {
+                    "error": (
+                        "status must be pending, accepted, started, or completed"
+                    )
+                }
+            ),
             400,
         )
 
@@ -416,6 +443,9 @@ def update_ride_status(ride_id):
 
     ride_request.status = status
     db.session.commit()
+
+    if status in MQTT_RIDE_STATUS_VALUES:
+        publish_ride_status_update(ride_status_mqtt_message(ride_request))
 
     return jsonify(serialize_ride_request(ride_request))
 

@@ -4,8 +4,12 @@ const roleState = {
   register: 'customer'
 };
 let riderDashboardRides = [];
-let rideStatusFilter = 'in_progress';
+let customerDashboardRides = [];
+let rideStatusFilter = 'active';
 let nearbyRiders = [];
+let customerMqttClient = null;
+const RIDE_STATUS_TOPIC = 'ride/status';
+const MQTT_STATUS_VALUES = ['pending', 'accepted', 'started', 'completed'];
 
 function getAccount() {
   return getSession()?.account || null;
@@ -170,9 +174,12 @@ function renderRides(rides, targetId, options = {}) {
         </div>
       </div>
       ${showStatusActions && ride.status === 'pending'
-        ? `<button class="ride-action" type="button" onclick="updateRideStatus(${ride.id}, 'in_progress')">Accept</button>`
+        ? `<button class="ride-action" type="button" onclick="updateRideStatus(${ride.id}, 'accepted')">Accept</button>`
         : ''}
-      ${showStatusActions && ride.status === 'in_progress'
+      ${showStatusActions && ride.status === 'accepted'
+        ? `<button class="ride-action" type="button" onclick="updateRideStatus(${ride.id}, 'started')">Start</button>`
+        : ''}
+      ${showStatusActions && (ride.status === 'started' || ride.status === 'in_progress')
         ? `<button class="ride-action" type="button" onclick="updateRideStatus(${ride.id}, 'completed')">Complete</button>`
         : ''}
       ${showStatusActions && ride.status === 'completed'
@@ -184,14 +191,84 @@ function renderRides(rides, targetId, options = {}) {
 
 function formatRideStatus(status) {
   if (status === 'pending') return 'Waiting for rider';
-  return status === 'completed' ? 'Completed' : 'In progress';
+  if (status === 'accepted') return 'Accepted';
+  if (status === 'started') return 'Started';
+  if (status === 'completed') return 'Completed';
+  return 'In progress';
+}
+
+function renderCustomerDashboardRides() {
+  const tripLabel = customerDashboardRides.length === 1
+    ? '1 request'
+    : `${customerDashboardRides.length} requests`;
+
+  updateText('customer-request-count', tripLabel);
+  renderRides(customerDashboardRides, 'customer-ride-list', {
+    emptyMessage: 'You have not requested a ride yet.'
+  });
+}
+
+function applyRideStatusMqttMessage(message) {
+  const rideId = Number(message?.ride_id);
+  const status = String(message?.status || '').trim().toLowerCase();
+
+  if (!rideId || !MQTT_STATUS_VALUES.includes(status)) return;
+
+  let changed = false;
+  customerDashboardRides = customerDashboardRides.map(ride => {
+    if (Number(ride.id) !== rideId) return ride;
+    changed = true;
+    return { ...ride, status };
+  });
+
+  if (changed) renderCustomerDashboardRides();
+}
+
+function mqttWebSocketUrl() {
+  if (window.MQTT_WS_URL) return window.MQTT_WS_URL;
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.hostname || 'localhost';
+  return `${protocol}//${host}:9001`;
+}
+
+function initCustomerMqttSubscription() {
+  if (customerMqttClient || typeof mqtt === 'undefined') return;
+
+  customerMqttClient = mqtt.connect(mqttWebSocketUrl(), {
+    clientId: `customer_dashboard_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    connectTimeout: 5000,
+    reconnectPeriod: 2000
+  });
+
+  customerMqttClient.on('connect', () => {
+    customerMqttClient.subscribe(RIDE_STATUS_TOPIC);
+  });
+
+  customerMqttClient.on('message', (topic, payload) => {
+    if (topic !== RIDE_STATUS_TOPIC) return;
+
+    try {
+      applyRideStatusMqttMessage(JSON.parse(payload.toString()));
+    } catch (error) {
+      console.warn('Invalid MQTT ride status message', error);
+    }
+  });
+
+  customerMqttClient.on('error', error => {
+    console.warn('Could not connect to MQTT broker', error);
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (customerMqttClient) customerMqttClient.end(true);
+  });
 }
 
 function renderRiderDashboardRides() {
   const filteredRides = riderDashboardRides.filter(ride => {
-    const status = ride.status || 'in_progress';
-    return rideStatusFilter === 'in_progress'
-      ? status === 'pending' || status === 'in_progress'
+    const status = ride.status || 'pending';
+    return rideStatusFilter === 'active'
+      ? ['pending', 'accepted', 'started', 'in_progress'].includes(status)
       : status === rideStatusFilter;
   });
 
@@ -199,13 +276,13 @@ function renderRiderDashboardRides() {
     showStatusActions: true,
     emptyMessage: rideStatusFilter === 'completed'
       ? 'No completed rides yet.'
-      : 'No rides in progress yet.'
+      : 'No active rides yet.'
   });
 }
 
 function setRideStatusFilter(status) {
   rideStatusFilter = status;
-  document.getElementById('in-progress-filter')?.classList.toggle('active', status === 'in_progress');
+  document.getElementById('in-progress-filter')?.classList.toggle('active', status === 'active');
   document.getElementById('completed-filter')?.classList.toggle('active', status === 'completed');
   renderRiderDashboardRides();
 }
@@ -334,7 +411,7 @@ function updateDashboard(data) {
   updateText('rider-page-trip-count', rides.length);
   riderDashboardRides = rides.map(ride => ({
     ...ride,
-    status: ride.status || 'in_progress'
+    status: ride.status || 'pending'
   }));
   renderRides(rides, 'ride-list');
   renderRiderDashboardRides();
@@ -342,12 +419,11 @@ function updateDashboard(data) {
 
 function updateCustomerDashboard(data) {
   const rides = data.assigned_trips || [];
-  const tripLabel = rides.length === 1 ? '1 request' : `${rides.length} requests`;
-
-  updateText('customer-request-count', tripLabel);
-  renderRides(rides, 'customer-ride-list', {
-    emptyMessage: 'You have not requested a ride yet.'
-  });
+  customerDashboardRides = rides.map(ride => ({
+    ...ride,
+    status: ride.status || 'pending'
+  }));
+  renderCustomerDashboardRides();
 }
 
 function loadCustomerDashboard() {
@@ -535,6 +611,7 @@ function initPage() {
     updateText('customer-title', 'Customer page');
     loadNearbyRiders();
     loadCustomerDashboard();
+    initCustomerMqttSubscription();
   }
 
   if (page === 'rider') {
