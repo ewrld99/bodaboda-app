@@ -3,7 +3,7 @@ version: "3.8"
 services:
   backend:
     # FIXED: Uses the dynamic environment variable passed by your pipeline
-    image: ${DOCKER_IMAGE:-ewrld9/bodaboda-app:latest}
+    image: ${DOCKER_IMAGE}
     env_file:
       - ./backend/.env
     environment:
