@@ -1,7 +1,7 @@
 services:
   backend:
-    # image: ewrld9/bodaboda-app:latest
-    build: ./backend
+    image: ewrld9/bodaboda-app:latest
+    # build: ./backend
     env_file:
       - ./backend/.env
     environment:
