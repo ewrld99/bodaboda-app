@@ -5,34 +5,25 @@ on:
     branches: [main]
   pull_request:
 
+# Least-privilege token — only read access needed
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.11"
   IMAGE_NAME: bodaboda-app
 
 jobs:
-  build-app:
-    name: Build Application
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install Dependencies
-        run: |
-          pip install -r backend/requirements.txt
-
+  # ============================================================
+  # JOB 1: Build & Test
+  # Assignment Task 2 — pipeline must build then test before
+  # pushing to any external service.
+  # The old separate build-app job produced nothing reusable
+  # (each job is a fresh VM), so build and test are combined here.
+  # ============================================================
   tests:
-    name: Run Tests
+    name: Build & Run Tests
     runs-on: ubuntu-latest
-    needs: build-app
 
     services:
       postgres:
@@ -54,10 +45,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -65,7 +56,7 @@ jobs:
 
       - name: Install PostgreSQL Client
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y postgresql-client
 
       - name: Wait for PostgreSQL
@@ -78,78 +69,156 @@ jobs:
       - name: Install Dependencies
         run: |
           pip install -r backend/requirements.txt
-          pip install pytest
+          pip install -r backend/requirements-dev.txt  # pytest and other test deps go here
 
+      # Task 6: Pipeline stops here if tests fail — nothing below runs
       - name: Run Tests
-        run: |
-          pytest
+        working-directory: backend # ensures pytest finds the correct config
+        run: pytest --tb=short -v
 
+  # ============================================================
+  # JOB 2: Build Docker Image & Push to Docker Hub
+  # Assignment Option A / Task 2 — "Publish to Third-Party"
+  # Assignment Task 5 — image must be tagged: SHA + semver + latest
+  # ============================================================
   docker:
-    name: Build and Push Docker Image
+    name: Build & Push to Docker Hub
     runs-on: ubuntu-latest
-    needs: tests
+    needs: tests # Task 6: only runs when tests pass
 
     outputs:
-      image: ${{ steps.meta.outputs.image }}
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+      semver_tag: ${{ steps.meta.outputs.semver_tag }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Set Image Tag
+      # Task 5: Produce multiple tags —
+      #   - SHA tag      → immutable, traceable (e.g. bodaboda-app:abc1234)
+      #   - Semver tag   → from Git tag if present, else "dev" (e.g. bodaboda-app:v1.0)
+      #   - latest tag   → always points to the most recent main build
+      - name: Compute Image Tags
         id: meta
         run: |
-          IMAGE=${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+          REPO=${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+          SHORT_SHA=${GITHUB_SHA::7}
 
-      - name: Login to DockerHub
+          # Use the Git tag (v1.0, v2.0 …) when pushing a tag, otherwise "dev"
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            SEMVER=${GITHUB_REF#refs/tags/}
+          else
+            SEMVER="dev"
+          fi
+
+          echo "sha_tag=${REPO}:${SHORT_SHA}"   >> $GITHUB_OUTPUT
+          echo "semver_tag=${REPO}:${SEMVER}"   >> $GITHUB_OUTPUT
+          echo "latest_tag=${REPO}:latest"       >> $GITHUB_OUTPUT
+
+          echo "SHA tag:    ${REPO}:${SHORT_SHA}"
+          echo "Semver tag: ${REPO}:${SEMVER}"
+          echo "Latest tag: ${REPO}:latest"
+
+      # Task 1: Login to Docker Hub using stored credentials
+      - name: Login to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push Image
-        uses: docker/build-push-action@v6
+      # Task 2: Build image and push all three tags to Docker Hub
+      - name: Build & Push Image
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
           context: ./backend
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: ${{ steps.meta.outputs.image }}
+          tags: |
+            ${{ steps.meta.outputs.sha_tag }}
+            ${{ steps.meta.outputs.semver_tag }}
+            ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
 
+      # Task 2: Confirm push succeeded
+      - name: Confirm Push to Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "✅ Image successfully pushed to Docker Hub:"
+          echo "   ${{ steps.meta.outputs.sha_tag }}"
+          echo "   ${{ steps.meta.outputs.semver_tag }}"
+          echo "   ${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+
+  # ============================================================
+  # JOB 3: Deploy to Production Server (AWS EC2)
+  # Assignment Option B / Task 3 — pull FROM Docker Hub, not local
+  # Assignment Task 6 — deployment only runs when all prior jobs pass
+  # ============================================================
   deploy:
-    name: Deploy to Production
+    name: Deploy to Production (AWS EC2)
     runs-on: ubuntu-latest
-    needs: docker
+    needs: docker # Task 6: only runs when docker build/push passes
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     env:
-      DOCKER_IMAGE: ${{ needs.docker.outputs.image }}
+      DOCKER_IMAGE: ${{ needs.docker.outputs.sha_tag }}
 
     steps:
+      # Task 3: SSH into the server, pull image FROM Docker Hub, restart app
       - name: Deploy Application
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         env:
           DOCKER_IMAGE: ${{ env.DOCKER_IMAGE }}
+          # Credentials passed via envs — never interpolated into the script body
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
         with:
           host: ${{ secrets.AWS_HOST }}
           username: ${{ secrets.AWS_USER }}
           key: ${{ secrets.AWS_SSH_KEY }}
-          envs: DOCKER_IMAGE
-
+          envs: DOCKER_IMAGE,DOCKER_USERNAME,DOCKER_PASSWORD
           script: |
             set -e
 
             cd bodaboda-app
 
-            echo "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login \
-              -u "${{ secrets.DOCKER_USERNAME }}" \
+            # Log in to Docker Hub on the remote server
+            echo "$DOCKER_PASSWORD" | sudo docker login \
+              -u "$DOCKER_USERNAME" \
               --password-stdin
-              
 
-            echo "Deploying image: $DOCKER_IMAGE"
+            echo "🚀 Deploying image: $DOCKER_IMAGE"
 
+            # Task 3: Pull the image FROM Docker Hub (not a local build)
             sudo DOCKER_IMAGE=$DOCKER_IMAGE docker compose pull
 
+            # Restart with zero-downtime recreation
             sudo DOCKER_IMAGE=$DOCKER_IMAGE docker compose up -d --force-recreate
 
-            sudo docker image prune -f
+            # Prune only images older than 24h — avoids removing unrelated service images
+            sudo docker image prune -f --filter "until=24h"
+
+      # Task 6: Verify the deployed containers are healthy
+      - name: Verify Deployment
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
+        with:
+          host: ${{ secrets.AWS_HOST }}
+          username: ${{ secrets.AWS_USER }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          script: |
+            set -e
+            cd bodaboda-app
+
+            echo "--- Container status ---"
+            sudo docker compose ps
+
+            # Wait briefly for the app to finish starting
+            sleep 5
+
+            echo "--- Health check ---"
+            sudo docker compose exec -T app curl -f http://localhost:8000/health \
+              || {
+                echo "❌ Health check failed — printing recent logs:"
+                sudo docker compose logs --tail=50 app
+                exit 1
+              }
+
+            echo "✅ Deployment verified successfully."
