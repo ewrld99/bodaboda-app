@@ -127,6 +127,16 @@ jobs:
     env:
       DOCKER_IMAGE: ${{ needs.docker.outputs.image_tag }}
     steps:
+      - name: Start ssh-agent and add private key
+        uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.AWS_SSH_KEY }}
+
+      - name: Copy docker-compose.yml to remote via SCP
+        run: |
+          scp -o StrictHostKeyChecking=no docker-compose.yml ${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}:bodaboda-app/docker-compose.yml
+        shell: bash
+
       - name: Deploy Application via SSH (Task 3)
         uses: appleboy/ssh-action@v1.2.0
         env:

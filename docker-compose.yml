@@ -1,9 +1,9 @@
-version: "3.8"
 
 services:
   backend:
+    # build: ./backend
     # FIXED: Uses the dynamic environment variable passed by your pipeline
-    image: ${DOCKER_IMAGE}
+    image: ewrld9/backend-app:latest
     env_file:
       - ./backend/.env
     environment:
@@ -19,11 +19,11 @@ services:
     restart: unless-stopped
 
   nginx:
-    image: nginx:latest
+    # build: ./frontend
+    image: ewrld9/bodaboda-nginx:latest
     ports:
       - "80:80"
     volumes:
-      - ./frontend:/usr/share/nginx/html
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - backend
