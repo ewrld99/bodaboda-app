@@ -12,9 +12,28 @@ env:
   NGINX_IMAGE_NAME: bodaboda-app-nginx
 
 jobs:
+  build-app:
+    name: Build Application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install Dependencies
+        run: |
+          pip install -r backend/requirements.txt
+
   tests:
     name: Run Tests
     runs-on: ubuntu-latest
+    needs: build-app
     services:
       postgres:
         image: postgres:15
@@ -75,17 +94,14 @@ jobs:
         run: |
           pytest
 
-      - name: Verify MQTT topic isolation
-        run: |
-          pytest tests/test_mqtt_scoped_topics.py -v
-
-  docker-backend:
-    name: Build and Push Backend Docker Image
+  docker:
+    name: Build Docker Image and Push to Docker Hub
     runs-on: ubuntu-latest
     needs: tests
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     outputs:
-      image_tag: ${{ steps.meta.outputs.version_tag }}
+      backend_image_tag: ${{ steps.meta-backend.outputs.version_tag }}
+      nginx_image_tag: ${{ steps.meta-nginx.outputs.version_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -96,97 +112,64 @@ jobs:
       - name: Cache Docker layers
         uses: actions/cache@v3
         with:
-          path: /tmp/.buildx-cache-backend
-          key: ${{ runner.os }}-buildx-backend-${{ github.sha }}
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-buildx-backend-
+            ${{ runner.os }}-buildx-
 
-      - name: Define Image Tags
-        id: meta
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Define Backend Image Tags
+        id: meta-backend
         run: |
           SHA_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}"
           LATEST_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.BACKEND_IMAGE_NAME }}:latest"
           echo "version_tag=$SHA_TAG" >> $GITHUB_OUTPUT
           echo "tags=$SHA_TAG,$LATEST_TAG" >> $GITHUB_OUTPUT
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Build and Push Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./backend
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=local,src=/tmp/.buildx-cache-backend
-          cache-to: type=local,dest=/tmp/.buildx-cache-backend-new,mode=max
-
-      - name: Move cache
-        run: |
-          rm -rf /tmp/.buildx-cache-backend
-          mv /tmp/.buildx-cache-backend-new /tmp/.buildx-cache-backend
-
-  docker-nginx:
-    name: Build and Push Nginx Docker Image
-    runs-on: ubuntu-latest
-    needs: tests
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version_tag }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache-nginx
-          key: ${{ runner.os }}-buildx-nginx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-nginx-
-
-      - name: Define Image Tags
-        id: meta
+      - name: Define Nginx Image Tags
+        id: meta-nginx
         run: |
           SHA_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.NGINX_IMAGE_NAME }}:${{ github.sha }}"
           LATEST_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.NGINX_IMAGE_NAME }}:latest"
           echo "version_tag=$SHA_TAG" >> $GITHUB_OUTPUT
           echo "tags=$SHA_TAG,$LATEST_TAG" >> $GITHUB_OUTPUT
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v6
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
-      - name: Build and Push Image
+      - name: Build and Push Nginx Image
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=local,src=/tmp/.buildx-cache-nginx
-          cache-to: type=local,dest=/tmp/.buildx-cache-nginx-new,mode=max
+          tags: ${{ steps.meta-nginx.outputs.tags }}
+          cache-from: type=local,src=/tmp/.buildx-cache-new
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
       - name: Move cache
         run: |
-          rm -rf /tmp/.buildx-cache-nginx
-          mv /tmp/.buildx-cache-nginx-new /tmp/.buildx-cache-nginx
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
   deploy:
-    name: Deploy to Production Cloud (AWS)
+    name: Deploy to Server / Cloud
     runs-on: ubuntu-latest
-    needs: [docker-backend, docker-nginx]
+    needs: docker
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     env:
-      DOCKER_IMAGE: ${{ needs.docker-backend.outputs.image_tag }}
-      DOCKER_NGINX_IMAGE: ${{ needs.docker-nginx.outputs.image_tag }}
+      DOCKER_IMAGE: ${{ needs.docker.outputs.backend_image_tag }}
+      DOCKER_NGINX_IMAGE: ${{ needs.docker.outputs.nginx_image_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
