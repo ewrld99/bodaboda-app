@@ -20,5 +20,5 @@ scrape_configs:
   - job_name: backend
     static_configs:
       - targets:
-          - app:5000
+          - backend:5000
     metrics_path: /metrics

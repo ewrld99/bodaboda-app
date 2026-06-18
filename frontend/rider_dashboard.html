@@ -3,59 +3,99 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Rider Dashboard | BodaConnect</title>
+  <title>BodaConnect Fluid Console</title>
+  
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&family=Poppins:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@700;800;900&display=swap" rel="stylesheet">
+  
   <link rel="stylesheet" href="styles.css">
 </head>
 <body data-page="rider">
-  <header class="topbar">
-    <div class="shell topbar-inner">
+
+  <header class="topbar shell">
+    <div class="topbar-inner">
       <a class="brand" href="index.html">
         <div class="brand-mark">BC</div>
         <span>BodaConnect</span>
       </a>
-      <nav class="nav" aria-label="Main navigation">
-        <span class="nav-greeting" id="nav-greeting"></span>
-        <button class="btn btn-ghost" type="button" onclick="logout()">Logout</button>
+      <nav class="nav">
+        <span class="nav-greeting" id="nav-greeting">Syncing Engine...</span>
+        <button class="btn btn-ghost" type="button" onclick="logout()">Log Out</button>
       </nav>
     </div>
   </header>
 
-  <main class="shell page" data-protected hidden>
-   
+  <main class="shell" data-protected hidden>
+    
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Total Rides</span>
+          <div class="stat-icon">🏍️</div>
+        </div>
+        <div class="stat-value" id="total-rides-value">--</div>
+        <div class="stat-sub">Completed transactions</div>
+      </div>
 
-    <div class="panel panel-pad">
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Earnings Today</span>
+          <div class="stat-icon">💰</div>
+        </div>
+        <div class="stat-value" id="today-earnings-value">--</div>
+        <div class="stat-sub">Live wallet pocket cash</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-header">
+          <span class="stat-label">Avg Ride Time</span>
+          <div class="stat-icon">⏱️</div>
+        </div>
+        <div class="stat-value" id="avg-ride-time-value">--</div>
+        <div class="stat-sub">From match to drops</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      
       <div class="metric-grid">
         <div class="metric">
-          <div class="summary-label">Rider</div>
-          <div id="rider-page-name" class="summary-value">Rider</div>
+          <div class="summary-label">Active Transporter</div>
+          <div id="rider-page-name" class="summary-value">Verifying Identity...</div>
         </div>
         <div class="metric">
-          <div class="summary-label">Trips this rider has had</div>
+          <div class="summary-label">Trips Dispatched</div>
           <div id="rider-page-trip-count" class="summary-value">0</div>
         </div>
       </div>
 
-      <div class="page-head" style="margin-top:24px;">
+      <div class="page-head">
         <div>
-          <div class="eyebrow">Requests</div>
-          <h2>Customer ride requests</h2>
-          <div class="status-filters" aria-label="Ride status filter">
-            <button id="in-progress-filter" class="status-filter active" type="button" onclick="setRideStatusFilter('active')">Active</button>
-            <button id="completed-filter" class="status-filter" type="button" onclick="setRideStatusFilter('completed')">Completed</button>
+          <h2>Available Orders Feed</h2>
+          <div class="status-filters">
+            <button id="in-progress-filter" class="status-filter active" type="button" onclick="setRideStatusFilter('active')">Current Active</button>
+            <button id="completed-filter" class="status-filter" type="button" onclick="setRideStatusFilter('completed')">Past Logbooks</button>
           </div>
         </div>
-        <button class="btn btn-ghost" onclick="loadDashboard()">Refresh</button>
+        
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <button class="btn btn-secondary" onclick="loadDashboard()">Refresh</button>
+          <span class="refresh-indicator" id="refresh-indicator">
+            <span class="spinner" style="display: none;"></span>
+            <span id="last-update">Waiting on data pipeline...</span>
+          </span>
+        </div>
       </div>
 
       <div id="rider-page-ride-list" class="ride-list">
-        <div class="empty">Loading requested rides...</div>
+        <div class="empty">Scanning local radio dispatch lines...</div>
       </div>
+      
     </div>
   </main>
 
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

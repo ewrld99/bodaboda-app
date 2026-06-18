@@ -15,9 +15,21 @@ from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
-    from .mqtt_client import RIDE_STATUS_TOPIC, publish_ride_status_update
+    from .mqtt_client import (
+        RIDE_STATUS_TOPIC,
+        publish_ride_status_update,
+        publish_ride_request,
+        publish_ride_request_to_driver,
+        publish_ride_status_to_passenger,
+    )
 except ImportError:
-    from mqtt_client import RIDE_STATUS_TOPIC, publish_ride_status_update
+    from mqtt_client import (
+        RIDE_STATUS_TOPIC,
+        publish_ride_status_update,
+        publish_ride_request,
+        publish_ride_request_to_driver,
+        publish_ride_status_to_passenger,
+    )
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -147,6 +159,10 @@ class RideRequest(db.Model):
     status = db.Column(db.String(32), nullable=False, default="pending")
     rider_id = db.Column(db.Integer, db.ForeignKey("riders.id"), nullable=True)
     customer_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
+    started_at = db.Column(db.DateTime, nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    price = db.Column(db.Float, nullable=True)
     rider = db.relationship("Rider", lazy=True)
     customer = db.relationship("User", foreign_keys=[customer_id], lazy=True)
 
@@ -207,6 +223,26 @@ def ensure_database():
                 connection.exec_driver_sql(
                     "ALTER TABLE ride_requests ADD COLUMN customer_id INTEGER"
                 )
+        if "created_at" not in ride_columns:
+            with db.engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE ride_requests ADD COLUMN created_at TIMESTAMP DEFAULT NOW()"
+                )
+        if "started_at" not in ride_columns:
+            with db.engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE ride_requests ADD COLUMN started_at TIMESTAMP"
+                )
+        if "completed_at" not in ride_columns:
+            with db.engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE ride_requests ADD COLUMN completed_at TIMESTAMP"
+                )
+        if "price" not in ride_columns:
+            with db.engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "ALTER TABLE ride_requests ADD COLUMN price FLOAT"
+                )
 
 
 def serialize_ride_request(ride_request):
@@ -231,10 +267,29 @@ def normalize_ride_status(status):
     return RIDE_STATUS_ALIASES.get(status, status)
 
 
+def ride_request_mqtt_message(ride_request, passenger_name=None):
+    """Build MQTT ride request message for driver notification."""
+    from datetime import datetime, timezone
+    
+    return {
+        "ride_id": ride_request.id,
+        "passenger_id": ride_request.customer_id,
+        "pickup_location": ride_request.pickup,
+        "destination": ride_request.destination,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def ride_status_mqtt_message(ride_request):
+    """Build MQTT ride status message with all required fields."""
+    from datetime import datetime, timezone
+    
     return {
         "ride_id": ride_request.id,
         "status": ride_request.status,
+        "driver_id": ride_request.rider_id,
+        "passenger_id": ride_request.customer_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -409,6 +464,16 @@ def request_ride():
     db.session.add(ride_request)
     db.session.commit()
 
+    # Publish ride request to the SPECIFIC driver's topic (message isolation)
+    # Topic: driver/{rider_id}/ride_request — only this driver receives the request
+    publish_ride_request_to_driver(
+        rider_id,
+        ride_request_mqtt_message(
+            ride_request,
+            passenger_name=user.email if user else "Anonymous",
+        ),
+    )
+
     return (
         jsonify(
             {
@@ -422,6 +487,8 @@ def request_ride():
 
 @app.route("/api/ride-requests/<int:ride_id>/status", methods=["PATCH"])
 def update_ride_status(ride_id):
+    from datetime import datetime
+    
     data = request.get_json(silent=True) or {}
     status = normalize_ride_status(data.get("status"))
 
@@ -442,10 +509,27 @@ def update_ride_status(ride_id):
         return jsonify({"error": "ride request not found"}), 404
 
     ride_request.status = status
+    
+    # Set timestamps based on status
+    if status == "accepted" and not ride_request.started_at:
+        ride_request.started_at = datetime.utcnow()
+    elif status == "completed" and not ride_request.completed_at:
+        ride_request.completed_at = datetime.utcnow()
+        # Set a default price if not already set
+        if not ride_request.price:
+            ride_request.price = 500.0  # Default price in your currency
+    
     db.session.commit()
 
-    if status in MQTT_RIDE_STATUS_VALUES:
-        publish_ride_status_update(ride_status_mqtt_message(ride_request))
+    # Publish status update to the SPECIFIC passenger's topic (message isolation)
+    # Topic: passenger/{passenger_id}/ride/{ride_id}/status
+    # Only this passenger for this ride receives the update, not other passengers
+    if status in MQTT_RIDE_STATUS_VALUES and ride_request.customer_id:
+        publish_ride_status_to_passenger(
+            ride_request.customer_id,
+            ride_id,
+            ride_status_mqtt_message(ride_request)
+        )
 
     return jsonify(serialize_ride_request(ride_request))
 
@@ -508,6 +592,77 @@ def rider_dashboard():
             ],
         }
     )
+
+
+@app.route("/api/rider/total-rides", methods=["GET"])
+def rider_total_rides():
+    from sqlalchemy import func
+    
+    user = current_token_user()
+    if not user or user.role != "rider" or not user.rider_profile:
+        return jsonify({"error": "unauthorized"}), 401
+    
+    total_completed = db.session.query(
+        func.count(RideRequest.id)
+    ).filter(
+        RideRequest.rider_id == user.rider_profile.id,
+        RideRequest.status == "completed"
+    ).scalar() or 0
+    
+    return jsonify({
+        "total_rides": total_completed
+    })
+
+
+@app.route("/api/rider/today-earnings", methods=["GET"])
+def rider_today_earnings():
+    from datetime import date, datetime
+    from sqlalchemy import func
+    
+    user = current_token_user()
+    if not user or user.role != "rider" or not user.rider_profile:
+        return jsonify({"error": "unauthorized"}), 401
+    
+    today = date.today()
+    today_earnings = db.session.query(
+        func.coalesce(func.sum(RideRequest.price), 0)
+    ).filter(
+        RideRequest.rider_id == user.rider_profile.id,
+        RideRequest.status == "completed",
+        func.date(RideRequest.completed_at) == today
+    ).scalar() or 0.0
+    
+    return jsonify({
+        "today_earnings": float(today_earnings)
+    })
+
+
+@app.route("/api/rider/avg-ride-time", methods=["GET"])
+def rider_avg_ride_time():
+    from sqlalchemy import func, extract
+    
+    user = current_token_user()
+    if not user or user.role != "rider" or not user.rider_profile:
+        return jsonify({"error": "unauthorized"}), 401
+    
+    # Get average ride duration in minutes for completed rides
+    avg_duration = db.session.query(
+        func.avg(
+            extract('epoch', RideRequest.completed_at - RideRequest.started_at) / 60
+        )
+    ).filter(
+        RideRequest.rider_id == user.rider_profile.id,
+        RideRequest.status == "completed",
+        RideRequest.started_at.isnot(None),
+        RideRequest.completed_at.isnot(None)
+    ).scalar()
+    
+    # Round to 1 decimal place
+    avg_ride_time = round(float(avg_duration)) if avg_duration else 0
+    
+    return jsonify({
+        "avg_ride_time": avg_ride_time
+    })
 
 
 if __name__ == "__main__":

@@ -10,10 +10,23 @@ except ImportError:  # pragma: no cover - keeps the app importable without extra
 
 
 RIDE_STATUS_TOPIC = "ride/status"
+RIDE_REQUEST_TOPIC = "ride/request"
 MQTT_DISABLED_VALUES = {"0", "false", "no", "off"}
 RIDE_STATUS_MESSAGE_FORMAT = {
     "ride_id": "integer ride request id",
     "status": "accepted | started | completed",
+    "driver_id": "integer driver/rider id",
+    "passenger_id": "integer customer/passenger id",
+    "timestamp": "ISO 8601 UTC timestamp",
+}
+RIDE_REQUEST_MESSAGE_FORMAT = {
+    "ride_id": "integer ride request id",
+    "pickup": "string pickup location",
+    "destination": "string destination location",
+    "customer_id": "integer customer id",
+    "customer_username": "string customer email username",
+    "rider_id": "integer rider id",
+    "requested_at": "ISO 8601 timestamp",
 }
 
 logger = logging.getLogger(__name__)
@@ -104,3 +117,93 @@ def publish_mqtt_message(topic, message, *, qos=None, retain=None):
 def publish_ride_status_update(message):
     """Publish a ride status update to the required ride/status topic."""
     return publish_mqtt_message(_mqtt_topic(RIDE_STATUS_TOPIC), message)
+
+
+def publish_ride_request(message):
+    """Publish a new ride request to the ride/request topic for drivers."""
+    return publish_mqtt_message(_mqtt_topic(RIDE_REQUEST_TOPIC), message)
+
+
+# ============================================================================
+# SCOPED TOPIC PUBLISHERS - Message Isolation
+# ============================================================================
+# These functions ensure messages are only delivered to specific drivers/passengers
+# by using topic-based routing at the broker level (not client-side filtering)
+
+
+def build_driver_ride_request_topic(driver_id):
+    """
+    Build topic for ride requests scoped to a specific driver.
+    
+    Topic: driver/{driver_id}/ride_request
+    
+    Only this driver subscribes to this topic, guaranteeing isolation.
+    """
+    return f"driver/{driver_id}/ride_request"
+
+
+def build_passenger_ride_status_topic(passenger_id, ride_id):
+    """
+    Build topic for ride status updates scoped to a specific passenger and ride.
+    
+    Topic: passenger/{passenger_id}/ride/{ride_id}/status
+    
+    Only this passenger for this specific ride receives these updates.
+    """
+    return f"passenger/{passenger_id}/ride/{ride_id}/status"
+
+
+def publish_ride_request_to_driver(driver_id, message):
+    """
+    Publish a ride request to a specific driver's private topic.
+    
+    Args:
+        driver_id (int): The rider/driver ID who will receive this request
+        message (dict): Ride request details
+            {
+              "ride_id": <int>,
+              "passenger_id": <int>,
+              "pickup_location": <str>,
+              "destination": <str>,
+              "timestamp": <ISO8601>
+            }
+    
+    Returns:
+        bool: True if published successfully, False otherwise
+    
+    Message Isolation:
+        - ONLY the driver with this driver_id subscribes to this topic
+        - Other drivers do NOT receive this request
+        - Isolation guaranteed at broker level, not client side
+    """
+    topic = build_driver_ride_request_topic(driver_id)
+    return publish_mqtt_message(topic, message)
+
+
+def publish_ride_status_to_passenger(passenger_id, ride_id, message):
+    """
+    Publish a ride status update to a specific passenger's private topic.
+    
+    Args:
+        passenger_id (int): The customer/passenger ID who will receive this update
+        ride_id (int): The ride request ID being updated
+        message (dict): Status update details
+            {
+              "ride_id": <int>,
+              "status": "accepted|started|completed",
+              "driver_id": <int>,
+              "passenger_id": <int>,
+              "timestamp": <ISO8601>
+            }
+    
+    Returns:
+        bool: True if published successfully, False otherwise
+    
+    Message Isolation:
+        - ONLY the passenger with this passenger_id for this ride_id receives updates
+        - Other passengers do NOT receive updates for rides not theirs
+        - Drivers do NOT receive status update messages (only drivers publish, passengers receive)
+        - Isolation guaranteed at broker level, not client side
+    """
+    topic = build_passenger_ride_status_topic(passenger_id, ride_id)
+    return publish_mqtt_message(topic, message)

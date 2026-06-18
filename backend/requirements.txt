@@ -5,3 +5,4 @@ flask-sqlalchemy
 python-dotenv
 prometheus-flask-exporter
 paho-mqtt
+requests

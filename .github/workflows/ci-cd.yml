@@ -8,31 +8,13 @@ on:
 
 env:
   PYTHON_VERSION: "3.11"
-  IMAGE_NAME: bodaboda-app
+  BACKEND_IMAGE_NAME: bodaboda-app-backend
+  NGINX_IMAGE_NAME: bodaboda-app-nginx
 
 jobs:
-  build-app:
-    name: Build Application
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install Dependencies
-        run: |
-          pip install -r backend/requirements.txt
-
   tests:
     name: Run Tests
     runs-on: ubuntu-latest
-    needs: build-app
     services:
       postgres:
         image: postgres:15
@@ -47,8 +29,20 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
+      mqtt:
+        image: eclipse-mosquitto:latest
+        ports:
+          - 1883:1883
+          - 9001:9001
+        options: >-
+          --health-cmd="mosquitto_pub -h localhost -t healthcheck -m ping || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/bodaboda
+      MQTT_HOST: localhost
+      MQTT_PORT: 1883
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -81,11 +75,14 @@ jobs:
         run: |
           pytest
 
-  docker:
-    name: Build and Push Docker Image
+      - name: Verify MQTT topic isolation
+        run: |
+          pytest tests/test_mqtt_scoped_topics.py -v
+
+  docker-backend:
+    name: Build and Push Backend Docker Image
     runs-on: ubuntu-latest
     needs: tests
-    # Ensure Docker steps only trigger on main branch push if tests pass (Task 6)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     outputs:
       image_tag: ${{ steps.meta.outputs.version_tag }}
@@ -96,37 +93,104 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Define Image Tags (Task 5)
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache-backend
+          key: ${{ runner.os }}-buildx-backend-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-backend-
+
+      - name: Define Image Tags
         id: meta
         run: |
-          # Create tag variables for both the unique SHA version and latest
-          SHA_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          LATEST_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
-
+          SHA_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.BACKEND_IMAGE_NAME }}:${{ github.sha }}"
+          LATEST_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.BACKEND_IMAGE_NAME }}:latest"
           echo "version_tag=$SHA_TAG" >> $GITHUB_OUTPUT
           echo "tags=$SHA_TAG,$LATEST_TAG" >> $GITHUB_OUTPUT
 
-      - name: Login to DockerHub (Task 1 & 2)
+      - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push Image (Task 2 & 5)
+      - name: Build and Push Image
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=local,src=/tmp/.buildx-cache-backend
+          cache-to: type=local,dest=/tmp/.buildx-cache-backend-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache-backend
+          mv /tmp/.buildx-cache-backend-new /tmp/.buildx-cache-backend
+
+  docker-nginx:
+    name: Build and Push Nginx Docker Image
+    runs-on: ubuntu-latest
+    needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache-nginx
+          key: ${{ runner.os }}-buildx-nginx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-nginx-
+
+      - name: Define Image Tags
+        id: meta
+        run: |
+          SHA_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.NGINX_IMAGE_NAME }}:${{ github.sha }}"
+          LATEST_TAG="${{ secrets.DOCKER_USERNAME }}/${{ env.NGINX_IMAGE_NAME }}:latest"
+          echo "version_tag=$SHA_TAG" >> $GITHUB_OUTPUT
+          echo "tags=$SHA_TAG,$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=local,src=/tmp/.buildx-cache-nginx
+          cache-to: type=local,dest=/tmp/.buildx-cache-nginx-new,mode=max
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache-nginx
+          mv /tmp/.buildx-cache-nginx-new /tmp/.buildx-cache-nginx
 
   deploy:
     name: Deploy to Production Cloud (AWS)
     runs-on: ubuntu-latest
-    needs: docker
+    needs: [docker-backend, docker-nginx]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     env:
-      DOCKER_IMAGE: ${{ needs.docker.outputs.image_tag }}
+      DOCKER_IMAGE: ${{ needs.docker-backend.outputs.image_tag }}
+      DOCKER_NGINX_IMAGE: ${{ needs.docker-nginx.outputs.image_tag }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
       - name: Start ssh-agent and add private key
         uses: webfactory/ssh-agent@v0.5.4
         with:
@@ -137,28 +201,29 @@ jobs:
           scp -o StrictHostKeyChecking=no docker-compose.yml ${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}:bodaboda-app/docker-compose.yml
         shell: bash
 
-      - name: Deploy Application via SSH (Task 3)
+      - name: Deploy Application via SSH
         uses: appleboy/ssh-action@v1.2.0
         env:
           DOCKER_IMAGE: ${{ env.DOCKER_IMAGE }}
+          DOCKER_NGINX_IMAGE: ${{ env.DOCKER_NGINX_IMAGE }}
           DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
         with:
           host: ${{ secrets.AWS_HOST }}
           username: ${{ secrets.AWS_USER }}
           key: ${{ secrets.AWS_SSH_KEY }}
-          envs: DOCKER_IMAGE,DOCKER_USERNAME,DOCKER_PASSWORD
+          envs: DOCKER_IMAGE,DOCKER_NGINX_IMAGE,DOCKER_USERNAME,DOCKER_PASSWORD
           script: |
             set -e
             cd bodaboda-app
 
-            # Fixed broken login syntax from original file
             echo "$DOCKER_PASSWORD" | sudo docker login -u "$DOCKER_USERNAME" --password-stdin
 
-            echo "Deploying targeted version: $DOCKER_IMAGE"
+            echo "Deploying backend: $DOCKER_IMAGE"
+            echo "Deploying nginx: $DOCKER_NGINX_IMAGE"
 
-            # Export variable so Docker Compose can substitute it in docker-compose.yml
             export DOCKER_IMAGE=$DOCKER_IMAGE
+            export DOCKER_NGINX_IMAGE=$DOCKER_NGINX_IMAGE
 
             sudo -E docker compose pull
             sudo -E docker compose up -d --force-recreate

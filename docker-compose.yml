@@ -2,8 +2,7 @@
 services:
   backend:
     # build: ./backend
-    # FIXED: Uses the dynamic environment variable passed by your pipeline
-    image: ewrld9/backend-app:latest
+    image: ${DOCKER_IMAGE:-bodaboda-app-backend:local}
     env_file:
       - ./backend/.env
     environment:
@@ -20,7 +19,7 @@ services:
 
   nginx:
     # build: ./frontend
-    image: ewrld9/bodaboda-nginx:latest
+    image: ${DOCKER_NGINX_IMAGE:-bodaboda-app-nginx:local}
     ports:
       - "80:80"
     volumes:

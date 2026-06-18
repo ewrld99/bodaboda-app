@@ -113,7 +113,11 @@ def test_site_stats_counts_trips_and_riders(client):
 
 
 def test_ride_status_can_be_completed(client, monkeypatch):
-    monkeypatch.setattr(app_module, "publish_ride_status_update", lambda message: True)
+    monkeypatch.setattr(
+        app_module,
+        "publish_ride_status_to_passenger",
+        lambda passenger_id, ride_id, message: True,
+    )
 
     with app.app_context():
         ride_request = RideRequest(pickup="CBD", destination="Westlands")
@@ -133,11 +137,22 @@ def test_ride_status_can_be_completed(client, monkeypatch):
 
 
 def test_ride_status_update_publishes_mqtt_message(client, monkeypatch):
-    published_messages = []
+    published = []
+
+    def capture_publish(passenger_id, ride_id, message):
+        published.append(
+            {
+                "passenger_id": passenger_id,
+                "ride_id": ride_id,
+                "message": message,
+            }
+        )
+        return True
+
     monkeypatch.setattr(
         app_module,
-        "publish_ride_status_update",
-        lambda message: published_messages.append(message) or True,
+        "publish_ride_status_to_passenger",
+        capture_publish,
     )
 
     customer_response = client.post(
@@ -178,15 +193,74 @@ def test_ride_status_update_publishes_mqtt_message(client, monkeypatch):
     )
     data = response.get_json()
 
-    assert app_module.RIDE_STATUS_TOPIC == "ride/status"
     assert response.status_code == 200
     assert data["status"] == "accepted"
-    assert len(published_messages) == 1
+    assert len(published) == 1
 
-    message = published_messages[0]
-    assert message == {
+    event = published[0]
+    customer_id = customer_data["account"]["id"]
+    assert event["passenger_id"] == customer_id
+    assert event["ride_id"] == ride_id
+    assert event["message"] == {
         "ride_id": ride_id,
         "status": "accepted",
+        "driver_id": rider_data["account"]["rider_id"],
+        "passenger_id": customer_id,
+        "timestamp": event["message"]["timestamp"],
+    }
+
+
+def test_ride_request_publishes_to_driver_topic(client, monkeypatch):
+    published = []
+
+    def capture_publish(driver_id, message):
+        published.append({"driver_id": driver_id, "message": message})
+        return True
+
+    monkeypatch.setattr(
+        app_module,
+        "publish_ride_request_to_driver",
+        capture_publish,
+    )
+
+    customer_response = client.post(
+        "/api/register",
+        json={
+            "name": "Amina Hassan",
+            "email": "amina.request.mqtt@example.com",
+            "password": "pass1234",
+            "role": "customer",
+        },
+    )
+    customer_token = customer_response.get_json()["token"]
+    customer_id = customer_response.get_json()["account"]["id"]
+    rider_response = client.post(
+        "/api/register",
+        json={
+            "name": "Brian Rider",
+            "email": "brian.request.mqtt@example.com",
+            "password": "pass1234",
+            "role": "rider",
+        },
+    )
+    rider_id = rider_response.get_json()["account"]["rider_id"]
+
+    response = client.post(
+        "/api/request-ride",
+        json={"pickup": "CBD", "destination": "Westlands", "rider_id": rider_id},
+        headers={"Authorization": f"Bearer {customer_token}"},
+    )
+
+    assert response.status_code == 201
+    ride_id = response.get_json()["id"]
+    assert len(published) == 1
+    assert published[0]["driver_id"] == rider_id
+    assert published[0]["message"] == {
+        "ride_id": ride_id,
+        "passenger_id": customer_id,
+        "pickup_location": "CBD",
+        "destination": "Westlands",
+        "timestamp": published[0]["message"]["timestamp"],
     }
 
 

@@ -1,6 +1,9 @@
+docker-compose.override.yml
 backend/.venv/
-backend/.env
 __pycache__/
 *.pyc
 .pytest_cache/
 keypair.pem
+.env
+backend/.env
+frontend/.env

@@ -8,7 +8,7 @@ let customerDashboardRides = [];
 let rideStatusFilter = 'active';
 let nearbyRiders = [];
 let customerMqttClient = null;
-const RIDE_STATUS_TOPIC = 'ride/status';
+let riderMqttClient = null;
 const MQTT_STATUS_VALUES = ['pending', 'accepted', 'started', 'completed'];
 
 function getAccount() {
@@ -235,32 +235,88 @@ function mqttWebSocketUrl() {
 function initCustomerMqttSubscription() {
   if (customerMqttClient || typeof mqtt === 'undefined') return;
 
+  const account = getAccount();
+  if (!account || !account.id) return;
+
+  const passengerId = account.id;
+  const topic = `passenger/${passengerId}/ride/+/status`;
+
   customerMqttClient = mqtt.connect(mqttWebSocketUrl(), {
-    clientId: `customer_dashboard_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    clientId: `customer_dashboard_${passengerId}_${Date.now()}_${Math.random().toString(16).slice(2)}`,
     connectTimeout: 5000,
     reconnectPeriod: 2000
   });
 
   customerMqttClient.on('connect', () => {
-    customerMqttClient.subscribe(RIDE_STATUS_TOPIC);
+    console.log('Connected to MQTT broker');
+    customerMqttClient.subscribe(topic, err => {
+      if (err) console.warn('Subscription error (customer):', err);
+      else console.log('Subscribed to passenger status topic:', topic);
+    });
   });
 
   customerMqttClient.on('message', (topic, payload) => {
-    if (topic !== RIDE_STATUS_TOPIC) return;
-
+    const message = payload.toString();
+    console.log('Ride status update:', message);
+    console.log('Ride status update topic:', topic);
     try {
-      applyRideStatusMqttMessage(JSON.parse(payload.toString()));
+      applyRideStatusMqttMessage(JSON.parse(message));
     } catch (error) {
       console.warn('Invalid MQTT ride status message', error);
     }
   });
 
   customerMqttClient.on('error', error => {
-    console.warn('Could not connect to MQTT broker', error);
+    console.warn('Could not connect to MQTT broker (customer):', error);
   });
 
   window.addEventListener('beforeunload', () => {
     if (customerMqttClient) customerMqttClient.end(true);
+  });
+}
+
+
+function initRiderMqttSubscription() {
+  if (riderMqttClient || typeof mqtt === 'undefined') return;
+
+  const account = getAccount();
+  if (!account || !account.rider_id) return;
+
+  const riderId = account.rider_id;
+  const topic = `driver/${riderId}/ride_request`;
+
+  riderMqttClient = mqtt.connect(mqttWebSocketUrl(), {
+    clientId: `rider_dashboard_${riderId}_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    connectTimeout: 5000,
+    reconnectPeriod: 2000
+  });
+
+  riderMqttClient.on('connect', () => {
+    console.log('Connected to MQTT broker');
+    riderMqttClient.subscribe(topic, err => {
+      if (err) console.warn('Subscription error (rider):', err);
+      else console.log('Subscribed to driver ride request topic:', topic);
+    });
+  });
+
+  riderMqttClient.on('message', (topic, payload) => {
+    const message = payload.toString();
+    console.log('New ride request:', message);
+    console.log('New ride request topic:', topic);
+    try {
+      JSON.parse(message);
+      loadDashboard();
+    } catch (err) {
+      console.warn('Invalid ride request payload', err);
+    }
+  });
+
+  riderMqttClient.on('error', error => {
+    console.warn('Could not connect to MQTT broker (rider):', error);
+  });
+
+  window.addEventListener('beforeunload', () => {
+    if (riderMqttClient) riderMqttClient.end(true);
   });
 }
 
@@ -590,6 +646,67 @@ function loginAccount(event) {
     });
 }
 
+function loadRiderStats() {
+  const page = document.body.dataset.page;
+  if (page !== 'rider') return Promise.resolve();
+  
+  return Promise.all([
+    loadRiderTotalRides(),
+    loadRiderTodayEarnings(),
+    loadRiderAvgRideTime()
+  ]);
+}
+
+function loadRiderTotalRides() {
+  return fetch('/api/rider/total-rides', {
+    headers: authHeaders()
+  })
+    .then(response => {
+      if (!response.ok) throw new Error('Could not load total rides');
+      return response.json();
+    })
+    .then(data => {
+      updateText('total-rides-value', String(data.total_rides || 0));
+    })
+    .catch(() => {
+      updateText('total-rides-value', '0');
+    });
+}
+
+function loadRiderTodayEarnings() {
+  return fetch('/api/rider/today-earnings', {
+    headers: authHeaders()
+  })
+    .then(response => {
+      if (!response.ok) throw new Error('Could not load today earnings');
+      return response.json();
+    })
+    .then(data => {
+      const earnings = data.today_earnings || 0;
+      updateText('today-earnings-value', `${earnings.toFixed(2)}`);
+    })
+    .catch(() => {
+      updateText('today-earnings-value', '0.00');
+    });
+}
+
+function loadRiderAvgRideTime() {
+  return fetch('/api/rider/avg-ride-time', {
+    headers: authHeaders()
+  })
+    .then(response => {
+      if (!response.ok) throw new Error('Could not load avg ride time');
+      return response.json();
+    })
+    .then(data => {
+      const avgTime = data.avg_ride_time || 0;
+      updateText('avg-ride-time-value', `${avgTime} min`);
+    })
+    .catch(() => {
+      updateText('avg-ride-time-value', '0 min');
+    });
+}
+
 function initPage() {
   const page = document.body.dataset.page;
   const account = getAccount();
@@ -620,6 +737,8 @@ function initPage() {
     revealProtectedPage();
     updateNavGreeting(rider);
     loadDashboard();
+    loadRiderStats();
+    initRiderMqttSubscription();
   }
 
   if (page === 'home') {
